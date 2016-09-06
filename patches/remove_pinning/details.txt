@@ -1,0 +1,3 @@
+Remove Certificate Pinning
+
+This patch removes certificate pinning by replacing TrustManager which handles the verification of server by one that does nothing.
