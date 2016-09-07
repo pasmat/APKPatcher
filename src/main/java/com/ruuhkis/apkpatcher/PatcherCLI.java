@@ -58,16 +58,46 @@ public class PatcherCLI {
 
         PatcherConfig patcherConfig = queryConfig(scanner);
 
-        File selectedApk = queryApk(scanner, patcherConfig);
+        File selectedApk = queryApk(scanner, patcherConfig, patcherConfig.getWorkingDir());
 
-        List<File> patches = queryPatches(scanner, patcherConfig);
+        List<File> patches = queryPatches(scanner, patcherConfig, patcherConfig.getPatchesDir());
 
         applyPatches(selectedApk, patches, patcherConfig);
     }
 
-    private File queryApk(Scanner scanner, PatcherConfig patcherConfig) {
+    private File queryApk(Scanner scanner, PatcherConfig patcherConfig, File directory) {
         System.out.println("Choose APK to be used");
-        return queryFile(scanner, patcherConfig.getWorkingDir().listFiles(), new APKFileQuorier(patcherConfig));
+
+        if(!hasApks(directory)) {
+            System.out.println(directory.getAbsolutePath() + " doesn't contain any APK files, please choose another directory:");
+
+            File selectedFile = new File(scanner.nextLine());
+
+            if(selectedFile.exists() && selectedFile.getName().endsWith(".apk")){
+                return selectedFile;
+            }
+
+            return queryApk(scanner, patcherConfig, selectedFile);
+        } else {
+
+            File[] files = directory.listFiles();
+
+            return queryFile(scanner, files, new APKFileQuorier(patcherConfig));
+        }
+    }
+
+    private boolean hasApks(File directory) {
+        File[] files = directory.listFiles();
+
+        if(files != null) {
+
+            for (File file : files) {
+                if (file.getName().endsWith(".apk")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private PatcherConfig queryConfig(Scanner scanner) {
@@ -90,7 +120,23 @@ public class PatcherCLI {
         return new PatcherConfig(sdkDirectory, buildToolsDir, apkTool, javaDirectory);
     }
 
-    private List<File> queryPatches(Scanner scanner, PatcherConfig patcherConfig) {
+    private List<File> queryPatches(Scanner scanner, PatcherConfig patcherConfig, File directory) {
+        if(!directory.exists() || !directory.isDirectory() || directory.listFiles().length <= 0) {
+            System.out.println(directory.getAbsolutePath() + " isn't valid patches directory, please choose another directory that contains patches");
+
+            File selectedDirectory = new File(scanner.nextLine());
+
+            if(new File(selectedDirectory, DETAILS_TXT).exists()) {
+                ArrayList<File> files = new ArrayList<File>();
+
+                files.add(selectedDirectory);
+
+                return files;
+            } else {
+                return queryPatches(scanner, patcherConfig, selectedDirectory);
+            }
+        }
+
         PatchesFileQuerier patchesFileQuerier = new PatchesFileQuerier();
 
         while (true) {

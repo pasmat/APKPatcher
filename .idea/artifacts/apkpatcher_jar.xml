@@ -1,0 +1,11 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="apkpatcher:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/apkpatcher_jar</output-path>
+    <root id="archive" name="apkpatcher.jar">
+      <element id="module-output" name="apkpatcher" />
+      <element id="directory" name="META-INF">
+        <element id="file-copy" path="$PROJECT_DIR$/src/main/java/META-INF/MANIFEST.MF" />
+      </element>
+    </root>
+  </artifact>
+</component>
