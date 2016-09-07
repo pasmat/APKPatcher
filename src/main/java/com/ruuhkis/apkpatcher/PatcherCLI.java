@@ -5,7 +5,6 @@ import com.ruuhkis.apkpatcher.filequerier.BasicFileQuerier;
 import com.ruuhkis.apkpatcher.filequerier.FileQuerier;
 import com.ruuhkis.apkpatcher.filequerier.PatchesFileQuerier;
 
-import javax.security.auth.login.Configuration;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,46 +14,105 @@ import java.util.Scanner;
 /**
  * Created by PasiMatalamaki on 5.9.2016.
  */
-public class Patcher {
+public class PatcherCLI {
+
+    public static final String DETAILS_TXT = "details.txt";
 
     public static final String ANDROID_HOME_KEY = "ANDROID_HOME";
     public static final String JAVA_HOME_KEY = "JAVA_HOME";
     public static final String APK_TOOL_KEY = "APK_TOOL";
     public static final String BUILD_TOOLS_DIR_NAME = "build-tools";
-    public static final String PATCHES_DIR_NAME = "patches";
-    public static final String BIN_DIR_NAME = "bin";
-    public static final String KEYTOOL_EXE = "keytool.exe";
-    public static final String JARSIGNER_EXE = "jarsigner.exe";
+
     public static final String PATCHER_CFG = "patcher.cfg";
-    public static final String JAVA_EXE = "java.exe";
+
     public static final String TEMP_FOLDER_NAME = "temp";
+
     public static final String DECOMPILE_OUTPUT_DIR_NAME = "decompile_output";
     public static final String BUILD_OUTPUT_UNSIGNED_NAME = "build_output_us.apk";
     public static final String BUILD_OUTPUT_UNALIGNED_NAME = "build_output_ua.apk";
-    public static final String BUILD_ALIGNED_OUTPUT_NAME = "build_output.apk";
     public static final String BUILD_RELEASE_OUTPUT_NAME = "build_output_release.apk";
+
     private static final String KEYSTORE_OUTPUT_NAME = "keystore";
     public static final int KEYSTORE_VALIDITY = 10000;
     public static final int KEYSTORE_SIZE = 2048;
     public static final String KEYSTORE_ALGORITHM = "RSA";
     private static final String KEYSTORE_ALIAS = "APK_PATCHER";
     private static final String KEYSTORE_PASS = "APK_PATCHER";
-    public static final String ZIPALIGN_EXE = "zipalign.exe";
-    private static final String KEYSTORE_DETAILS = "CN=APK Patcher, OU=APK Patcher, O=APK Patcher, L=APK Patcher, S=APK Patcher, C=FI";
-    public static final String DETAILS_TXT = "details.txt";
+    private static final String KEYSTORE_DETAILS = "CN=APK PatcherCLI, OU=APK PatcherCLI, O=APK PatcherCLI, L=APK PatcherCLI, S=APK PatcherCLI, C=FI";
 
-    private final PatcherConfig patcherConfig;
+    public static final String DECOMPILE_COMMAND = "\"%s\" -jar \"%s\" d \"%s\" -o \"%s\" -f";
+    public static final String COMPILE_COMMAND = "\"%s\" -jar \"%s\" b \"%s\" -o \"%s\" -f";
+    public static final String GENERATE_KEY = "\"%s\" -genkey -v -keystore \"%s\" -alias \"%s\" -keyalg %s -keysize %d -validity %d -storepass \"%s\" -keypass \"%s\" -dname \"%s\"";
+    public static final String SIGN_JAR = "\"%s\" -verbose -keystore \"%s\" -signedjar \"%s\" \"%s\" %s -storepass \"%s\"";
+    public static final String ZIP_ALIGN = "\"%s\" -f 4 \"%s\" \"%s\"";
 
-
-    public Patcher(PatcherConfig patcherConfig) {
-        this.patcherConfig = patcherConfig;
-    }
+    private PatcherConfig patcherConfig;
 
     public static void main(String[] args) {
-        new Patcher();
+        new PatcherCLI().run();
 
-        File configurationFile = new File(PATCHER_CFG);
+    }
 
+    private void run() {
+        Scanner scanner = new Scanner(System.in);
+
+        PatcherConfig patcherConfig = queryConfig(scanner);
+
+        File selectedApk = queryApk(scanner, patcherConfig);
+
+        List<File> patches = queryPatches(scanner, patcherConfig);
+
+        applyPatches(selectedApk, patches, patcherConfig);
+    }
+
+    private File queryApk(Scanner scanner, PatcherConfig patcherConfig) {
+        System.out.println("Choose APK to be used");
+        return queryFile(scanner, patcherConfig.getWorkingDir().listFiles(), new APKFileQuorier(patcherConfig));
+    }
+
+    private PatcherConfig queryConfig(Scanner scanner) {
+        Properties configuration = loadConfiguration(getConfigurationFile());
+
+        File sdkDirectory = getConfiguredPathOrInput(scanner, configuration, ANDROID_HOME_KEY);
+
+        File apkTool = getConfiguredPathOrInput(scanner, configuration, APK_TOOL_KEY);
+
+        File javaDirectory = getConfiguredPathOrInput(scanner, configuration, JAVA_HOME_KEY);
+
+        saveConfiguration(configuration, getConfigurationFile());
+
+        File buildToolsDir = fetchBuildToolsDir(scanner, sdkDirectory);
+
+        if (buildToolsDir == null) {
+            throw new RuntimeException("You have no build tools installed or your SDK path is wrong");
+        }
+
+        return new PatcherConfig(sdkDirectory, buildToolsDir, apkTool, javaDirectory);
+    }
+
+    private List<File> queryPatches(Scanner scanner, PatcherConfig patcherConfig) {
+        PatchesFileQuerier patchesFileQuerier = new PatchesFileQuerier();
+
+        while (true) {
+            System.out.println("Toggle selected patches, or press enter to proceed patching..");
+
+            File selectedPatch = queryFile(scanner, patcherConfig.getPatchesDir().listFiles(), patchesFileQuerier);
+
+            if (selectedPatch != null) {
+                patchesFileQuerier.togglePatch(selectedPatch);
+            } else {
+                break;
+            }
+        }
+
+        return patchesFileQuerier.getSelectedPatches();
+    }
+
+    private File getConfigurationFile() {
+        return new File(PATCHER_CFG);
+    }
+
+    private Properties loadConfiguration(File configurationFile) {
         Properties configuration = new Properties();
 
 
@@ -76,16 +134,10 @@ public class Patcher {
                 }
             }
         }
+        return configuration;
+    }
 
-        Scanner scanner = new Scanner(System.in);
-
-        File sdkDirectory = fetchPath(scanner, configuration, ANDROID_HOME_KEY);
-
-        File apkTool = fetchPath(scanner, configuration, APK_TOOL_KEY);
-
-        File javaDirectory = fetchPath(scanner, configuration, JAVA_HOME_KEY);
-
-
+    private void saveConfiguration(Properties configuration, File configurationFile) {
         FileOutputStream os = null;
         try {
             os = new FileOutputStream(configurationFile);
@@ -100,17 +152,9 @@ public class Patcher {
                 e.printStackTrace();
             }
         }
+    }
 
-
-        File javaBinDirectory = new File(javaDirectory, BIN_DIR_NAME);
-
-        File java = new File(javaBinDirectory, JAVA_EXE);
-
-        File keyTool = new File(javaBinDirectory, KEYTOOL_EXE);
-
-        File jarSigner = new File(javaBinDirectory, JARSIGNER_EXE);
-
-        System.out.println("Choose your buildToolsDir");
+    private File fetchBuildToolsDir(Scanner scanner, File sdkDirectory) {
         File buildToolsParentDir = new File(sdkDirectory, BUILD_TOOLS_DIR_NAME);
 
         File[] buildToolsDirs = buildToolsParentDir.listFiles();
@@ -119,56 +163,21 @@ public class Patcher {
 
         if (buildToolsDirs != null && buildToolsDirs.length > 0) {
             if (buildToolsDirs.length > 1) {
+                System.out.println("Choose your buildToolsDir");
                 buildToolsDir = queryFile(scanner, buildToolsDirs, new BasicFileQuerier());
             } else {
                 buildToolsDir = buildToolsDirs[0];
             }
         }
 
-        if (buildToolsDir == null) {
-            throw new RuntimeException("You have no build tools installed or your SDK path is wrong");
-        }
-
-
-        File zipAlign = new File(buildToolsDir, ZIPALIGN_EXE);
-
-        PatcherConfig patcherConfig = new PatcherConfig(sdkDirectory, buildToolsDir);
-
-        File workingDir = new File(".");
-
-        System.out.println("Choose APK to be used");
-        File selectedApk = queryFile(scanner, workingDir.listFiles(), new APKFileQuorier(patcherConfig));
-
-        File patchesDir = new File(workingDir, PATCHES_DIR_NAME);
-
-        PatchesFileQuerier patchesFileQuerier = new PatchesFileQuerier();
-
-        while (true) {
-            System.out.println("Toggle selected patches, or press enter to proceed patching..");
-
-            File selectedPatch = queryFile(scanner, patchesDir.listFiles(), patchesFileQuerier);
-
-            if (selectedPatch != null) {
-                patchesFileQuerier.togglePatch(selectedPatch);
-            } else {
-                break;
-            }
-        }
-
-        List<File> selectedPatches = patchesFileQuerier.getSelectedPatches();
-
-        applyPatches();
+        return buildToolsDir;
     }
 
-    public void applyPatches() {
+    public void applyPatches(File apkFile, List<File> selectedPatches, PatcherConfig patcherConfig) {
         if (selectedPatches.size() > 0) {
 
             try {
-                File tempDir = new File(workingDir, TEMP_FOLDER_NAME);
-
-                if(!tempDir.exists()) {
-                    tempDir.mkdirs();
-                }
+                File tempDir = ensureTempDirExists(patcherConfig);
 
                 File decompileOutput = new File(tempDir, DECOMPILE_OUTPUT_DIR_NAME);
 
@@ -176,7 +185,7 @@ public class Patcher {
                     decompileOutput.mkdirs();
                 }
 
-                String decompileCommand = "\"" + java.getAbsolutePath() + "\"" + " -jar \"" + apkTool.getName() + "\" d \"" + selectedApk.getAbsolutePath() + "\" -o \"" + decompileOutput.getAbsolutePath() + "\" -f";
+                String decompileCommand = String.format(DECOMPILE_COMMAND, patcherConfig.getJava().getAbsolutePath(), patcherConfig.getApkTool().getAbsolutePath(), apkFile.getAbsolutePath(), decompileOutput.getAbsolutePath());
 
                 executeCommand(decompileCommand);
 
@@ -188,27 +197,27 @@ public class Patcher {
 
                 File buildOutputUnsigned = new File(tempDir, BUILD_OUTPUT_UNSIGNED_NAME);
 
-                String compileCommand = "\"" + java.getAbsolutePath() + "\"" + " -jar \"" + apkTool.getName() + "\" b \"" + decompileOutput.getAbsolutePath() + "\" -o \"" + buildOutputUnsigned.getAbsolutePath() + "\" -f";
+                String compileCommand = String.format(COMPILE_COMMAND, patcherConfig.getJava().getAbsolutePath(), patcherConfig.getApkTool().getName(), decompileOutput.getAbsolutePath(), buildOutputUnsigned.getAbsolutePath());
 
                 executeCommand(compileCommand);
 
                 File keystore = new File(tempDir, KEYSTORE_OUTPUT_NAME);
 
                 if(!keystore.exists()) {
-                    String generateKeyCommand = "\"" + keyTool.getAbsolutePath() + "\" -genkey -v -keystore \"" + keystore.getAbsolutePath() + "\" -alias \"" + KEYSTORE_ALIAS + "\" -keyalg " + KEYSTORE_ALGORITHM + " -keysize " + KEYSTORE_SIZE + " -validity " + KEYSTORE_VALIDITY + " -storepass \"" + KEYSTORE_PASS + "\" -keypass \"" + KEYSTORE_PASS + "\" -dname \"" + KEYSTORE_DETAILS + "\"";
+                    String generateKeyCommand = String.format(GENERATE_KEY, patcherConfig.getKeyTool().getAbsolutePath(), keystore.getAbsolutePath(), KEYSTORE_ALIAS, KEYSTORE_ALGORITHM, KEYSTORE_SIZE, KEYSTORE_VALIDITY, KEYSTORE_PASS, KEYSTORE_PASS, KEYSTORE_DETAILS);
 
                     executeCommand(generateKeyCommand);
                 }
 
                 File signedOutput = new File(tempDir, BUILD_OUTPUT_UNALIGNED_NAME);
 
-                String jarSignCommand = "\"" + jarSigner.getAbsolutePath() + "\" -verbose -keystore \"" + keystore.getAbsolutePath() + "\" -signedjar \"" + signedOutput.getAbsolutePath() + "\" \"" + buildOutputUnsigned.getAbsolutePath() + "\" " + KEYSTORE_ALIAS + " -storepass \"" + KEYSTORE_PASS + "\"";
+                String jarSignCommand = String.format(SIGN_JAR, patcherConfig.getJarSigner().getAbsolutePath(), keystore.getAbsolutePath(), signedOutput.getAbsolutePath(), buildOutputUnsigned.getAbsolutePath(), KEYSTORE_ALIAS, KEYSTORE_PASS);
 
                 executeCommand(jarSignCommand);
 
-                File releaseOutput = new File(workingDir, BUILD_RELEASE_OUTPUT_NAME);
+                File releaseOutput = new File(patcherConfig.getWorkingDir(), BUILD_RELEASE_OUTPUT_NAME);
 
-                String zipAlignCommand = "\"" +zipAlign.getAbsolutePath() + "\" -f 4 \"" + signedOutput.getAbsolutePath() + "\" \"" + releaseOutput.getAbsolutePath() + "\"";
+                String zipAlignCommand = String.format(ZIP_ALIGN, patcherConfig.getZipAlign().getAbsolutePath(), signedOutput.getAbsolutePath(), releaseOutput.getAbsolutePath());
 
                 executeCommand(zipAlignCommand);
             } catch (IOException e) {
@@ -217,6 +226,15 @@ public class Patcher {
         } else {
             System.out.println("No patches selected.. Nothing to do..");
         }
+    }
+
+    private File ensureTempDirExists(PatcherConfig patcherConfig) {
+        File tempDir = new File(patcherConfig.getWorkingDir(), TEMP_FOLDER_NAME);
+
+        if(!tempDir.exists()) {
+            tempDir.mkdirs();
+        }
+        return tempDir;
     }
 
     private static void copyStructureTo(File srcRootFolder, File targetFolder) throws IOException {
@@ -276,7 +294,7 @@ public class Patcher {
         process.destroy();
     }
 
-    private static File fetchPath(Scanner scanner, Properties properties, String key) {
+    private static File getConfiguredPathOrInput(Scanner scanner, Properties properties, String key) {
         String path = null;
 
         if (properties.getProperty(key) != null && new File(properties.getProperty(key)).exists()) {
@@ -326,7 +344,13 @@ public class Patcher {
 
         String line = scanner.nextLine();
         if (line.length() > 0) {
-            return indexedFiles.get(Integer.parseInt(line));
+            int index = Integer.parseInt(line);
+
+            if(index >= 0 && index < indexedFiles.size()) {
+                return indexedFiles.get(index);
+            } else {
+                return queryFile(scanner, files, fileQuerier);
+            }
         } else {
             return null;
         }
