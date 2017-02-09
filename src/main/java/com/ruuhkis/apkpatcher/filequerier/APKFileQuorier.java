@@ -27,7 +27,7 @@ public class APKFileQuorier implements FileQuerier {
 
     public boolean queryFile(int index, File file) {
         if (file.getName().toLowerCase().endsWith(APK_FILE_SUFFIX)) {
-            File aapt = new File(patcherConfig.getBuildToolsDir(), "aapt.exe");
+            File aapt = new File(patcherConfig.getBuildToolsDir(), "aapt");
 
             try {
                 Process aaptProcess = Runtime.getRuntime().exec(aapt.getAbsolutePath() + " d badging " + file.getName());
